@@ -9,8 +9,8 @@ import { arenaControl, sanitizeName, signBus, SUPABASE_PUBLISHABLE_KEY, SUPABASE
 export const runtime='nodejs';
 export const maxDuration=300;
 type VSocket={send(data:string):void;on(event:'message',fn:(data:unknown)=>void):void;on(event:'close'|'error',fn:()=>void):void};
-type TicketPass={roomId:string;playerId:string;busSecret:string;snapshot?:unknown};
-type HostClaim={claimed:boolean;snapshot?:unknown;busSecret?:string};
+type TicketPass={roomId:string;playerId:string;busSecret:string;busTopic:string;snapshot?:unknown};
+type HostClaim={claimed:boolean;snapshot?:unknown;busSecret?:string;busTopic?:string};
 
 export async function GET(request:Request){
   const ticket=new URL(request.url).searchParams.get('ticket');
@@ -18,12 +18,13 @@ export async function GET(request:Request){
   let pass:TicketPass;
   try{pass=await arenaControl<TicketPass>({action:'ticket_consume',ticket});}
   catch{return new Response('Ticket invalid',{status:401});}
+  if(!/^[0-9a-f]{64}$/i.test(pass.busSecret)||!/^[0-9a-f]{32,64}$/i.test(pass.busTopic))return new Response('Ticket invalid',{status:401});
   return experimental_upgradeWebSocket((ws:VSocket)=>{void runGateway(ws,pass);},{maxPayload:64*1024});
 }
 
 async function runGateway(ws:VSocket,pass:TicketPass){
   const supabase=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
-  const topic=`arena:${pass.roomId}`;
+  const topic=`arena-bus:${pass.busTopic}`;
   const hostToken=crypto.randomUUID();
   let busSecret=pass.busSecret;
   let engine:ArenaEngine|null=null,isHost=false,closed=false;
