@@ -9,6 +9,7 @@
     "app/api/matchmake/route.ts":{"maxDuration":20},
     "app/api/session/route.ts":{"maxDuration":20},
     "app/api/ticket/route.ts":{"maxDuration":20},
-    "app/api/leaderboard/route.ts":{"maxDuration":20}
+    "app/api/leaderboard/route.ts":{"maxDuration":20},
+    "app/api/health/route.ts":{"maxDuration":20}
   }
 }
