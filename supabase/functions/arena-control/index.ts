@@ -47,6 +47,11 @@ Deno.serve(async (req: Request) => {
   try { body = await req.json(); } catch { return json({ error: 'bad_json' }, 400); }
   const action = body.action;
   try {
+    if (action === 'health') {
+      const { error } = await db.from('profiles').select('id').limit(1);
+      if (error) throw error;
+      return json({ ok: true, database: 'ok' });
+    }
     if (action === 'session_create') {
       if (!isUuid(body.playerId) || !isHash(body.tokenHash)) return json({ error: 'bad_session' }, 400);
       const nickname = safeName(body.nickname);
