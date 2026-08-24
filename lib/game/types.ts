@@ -1,0 +1,6 @@
+export type Vec2={x:number;y:number};export type PlayerInput={seq:number;angle:number;boost:boolean;clientTime:number};export type BodyPoint=Vec2&{px:number;py:number};
+export type WormState={id:string;name:string;x:number;y:number;vx:number;vy:number;angle:number;angularVelocity:number;mass:number;radius:number;alive:boolean;boosting:boolean;shield:number;overdriveUntil:number;kills:number;combo:number;comboUntil:number;skin:number;bot:boolean;elite:boolean;lastInputAt:number;input:PlayerInput;body:BodyPoint[]};
+export type FoodState={id:number;x:number;y:number;value:number;core?:boolean;hue:number};
+export type WormSnapshot={id:string;name:string;x:number;y:number;vx:number;vy:number;angle:number;mass:number;radius:number;boosting:boolean;kills:number;combo:number;skin:number;elite:boolean;shield:number;ack:number;body:Vec2[]};
+export type SnapshotMessage={type:'snapshot';roomId:string;serverTime:number;tick:number;worms:WormSnapshot[]};export type WorldMessage={type:'world';serverTime:number;foods:FoodState[];worldRadius:number};
+export type ServerEvent={type:'event';event:'death';playerId:string;killerId?:string;reason:string;mass:number;kills:number}|{type:'event';event:'core';playerId:string;mutation:'shield'|'overdrive'}|{type:'event';event:'boss';playerId:string;reward:number}|{type:'event';event:'host';host:boolean};

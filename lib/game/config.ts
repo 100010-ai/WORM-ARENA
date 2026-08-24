@@ -1,0 +1,2 @@
+export const GAME={tickRate:30,snapshotRate:12,worldRate:3,worldRadius:3400,startMass:34,maxMass:1600,foodTarget:620,maxFood:940,botFloor:8,targetPopulation:18,spatialCell:150,coreInterval:17,leviathanDelay:42,idleKickMs:18000} as const;
+export const SKINS=[['#ffbe4f','#ff6848'],['#5ce1b8','#168b8f'],['#83d7ff','#4b7cff'],['#c18dff','#6e4bff'],['#f5f7ff','#92a2bc'],['#ff7ad9','#8c5cff']] as const;

@@ -1,0 +1,1 @@
+{"functions":{"app/api/ws/route.ts":{"maxDuration":300,"memory":1024},"app/api/matchmake/route.ts":{"maxDuration":20},"app/api/session/route.ts":{"maxDuration":20}}}
