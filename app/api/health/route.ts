@@ -1,4 +1,4 @@
-import { arenaControl, getSupabaseServerConfig } from '@/lib/server/control';
+import { arenaControl, controlErrorCode, getSupabaseServerConfig } from '@/lib/server/control';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -10,7 +10,7 @@ export async function GET() {
     const control = await arenaControl<{ ok?: boolean; error?: string }>({ action: 'health' });
     if (!control?.ok) {
       return Response.json(
-        { ok: false, version: '4.1.1', database: 'unknown', control: control?.error ?? 'unavailable' },
+        { ok: false, version: '4.1.1', database: 'unknown', diagnostic: control?.error ?? 'control_unavailable' },
         { status: 503, headers: { 'cache-control': 'no-store' } },
       );
     }
@@ -25,9 +25,10 @@ export async function GET() {
       { headers: { 'cache-control': 'no-store' } },
     );
   } catch (error) {
-    console.error('health', error);
+    const diagnostic = controlErrorCode(error);
+    console.error('[health] failed', { diagnostic });
     return Response.json(
-      { ok: false, version: '4.1.1', control: 'unavailable' },
+      { ok: false, version: '4.1.1', diagnostic },
       { status: 503, headers: { 'cache-control': 'no-store' } },
     );
   }
