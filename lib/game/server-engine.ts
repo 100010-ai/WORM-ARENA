@@ -109,7 +109,7 @@ export class ArenaEngine {
     this.resolveHeadClashes(now);
     for(const w of this.worms.values()){if(!w.alive)continue;const cx=Math.floor(w.x/GAME.spatialCell),cy=Math.floor(w.y/GAME.spatialCell);let hit:CellItem|undefined;
       outer:for(let gx=cx-1;gx<=cx+1;gx++)for(let gy=cy-1;gy<=cy+1;gy++)for(const p of this.bodyGrid.get(`${gx},${gy}`)??[]){if(p.wormId===w.id)continue;const rr=w.radius*0.76+p.radius;if(d2(w.x,w.y,p.x,p.y)<rr*rr){hit=p;break outer;}}
-      if(hit)this.kill(w,hit.wormId,'body',now);
+      if(hit){const owner=this.worms.get(hit.wormId);if(!owner?.alive)continue;if(w.elite&&w.mass>owner.mass*1.12)this.kill(owner,w.id,'leviathan',now);else this.kill(w,hit.wormId,'body',now);}
     }
   }
   private resolveHeadClashes(now:number){const alive=[...this.worms.values()].filter(w=>w.alive);for(let i=0;i<alive.length;i++)for(let j=i+1;j<alive.length;j++){const a=alive[i],b=alive[j];const rr=(a.radius+b.radius)*0.72;if(d2(a.x,a.y,b.x,b.y)>rr*rr)continue;const ratio=a.mass/b.mass;if(ratio>1.22)this.kill(b,a.id,'head-clash',now);else if(ratio<0.82)this.kill(a,b.id,'head-clash',now);else{this.kill(a,b.id,'head-clash',now);this.kill(b,a.id,'head-clash',now);}}}
