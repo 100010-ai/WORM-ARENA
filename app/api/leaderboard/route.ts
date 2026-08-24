@@ -1,12 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
-import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from '@/lib/server/control';
+import { getSupabaseServerConfig } from '@/lib/server/control';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-const db = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false },
-});
 
 type Row = {
   rank: number | string;
@@ -18,6 +14,10 @@ type Row = {
 };
 
 export async function GET() {
+  const { url, publishableKey } = getSupabaseServerConfig();
+  const db = createClient(url, publishableKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
   const { data, error } = await db.rpc('get_global_leaderboard', { p_limit: 20 });
   if (error) {
     console.error('leaderboard', error);
