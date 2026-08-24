@@ -1,12 +1,293 @@
 'use client';
-import{forwardRef,useCallback,useEffect,useImperativeHandle,useMemo,useRef,useState,type ChangeEvent,type PointerEvent as ReactPointerEvent}from'react';import{SKINS}from'@/lib/game/config';import type{PlayerInput,SnapshotMessage,WorldMessage,WormSnapshot}from'@/lib/game/types';import type{GatewayToClient}from'@/lib/realtime/protocol';
-type Phase='boot'|'menu'|'matching'|'playing'|'dead'|'error';type Metrics={mass:number;kills:number;combo:number;rank:number;players:number;speed:number};type Profile={nickname:string;best_mass:number;kills:number;matches:number;coins:number};type CanvasHandle={setSnapshot(v:SnapshotMessage):void;setWorld(v:WorldMessage):void};const DEFAULT:Metrics={mass:34,kills:0,combo:0,rank:1,players:1,speed:0};
-export function GameShell(){const[phase,setPhase]=useState<Phase>('boot'),[nickname,setNickname]=useState('Игрок'),[profile,setProfile]=useState<Profile>({nickname:'Игрок',best_mass:0,kills:0,matches:0,coins:0}),[roomId,setRoomId]=useState(''),[ticket,setTicket]=useState(''),[playerId,setPlayerId]=useState(''),[snapshot,setSnapshot]=useState<SnapshotMessage|null>(null),[metrics,setMetrics]=useState(DEFAULT),[ping,setPing]=useState(0),[boost,setBoost]=useState(false),[toast,setToast]=useState(''),[error,setError]=useState('');const wsRef=useRef<WebSocket|null>(null),canvasRef=useRef<CanvasHandle|null>(null),leaderAt=useRef(0),reconnectTimer=useRef<ReturnType<typeof setTimeout>|null>(null),reconnectDelay=useRef(650),desiredOnline=useRef(false),pingTimer=useRef<ReturnType<typeof setInterval>|null>(null),toastTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
-const showToast=useCallback((m:string)=>{setToast(m);if(toastTimer.current)clearTimeout(toastTimer.current);toastTimer.current=setTimeout(()=>setToast(''),2400)},[]);const loadSession=useCallback(async()=>{const r=await fetch('/api/session',{cache:'no-store'}),d=await r.json();if(!r.ok)throw new Error(d.error||'Сессия недоступна');if(d.profile){setProfile(d.profile);setNickname(d.profile.nickname||'Игрок')}return d},[]);useEffect(()=>{let dead=false;void loadSession().then(()=>{if(!dead)setPhase('menu')}).catch(e=>{if(!dead){setError(e instanceof Error?e.message:'Ошибка запуска');setPhase('error')}});return()=>{dead=true}},[loadSession]);const disconnect=useCallback(()=>{desiredOnline.current=false;if(reconnectTimer.current)clearTimeout(reconnectTimer.current);if(pingTimer.current)clearInterval(pingTimer.current);wsRef.current?.close();wsRef.current=null},[]);useEffect(()=>()=>disconnect(),[disconnect]);
-const connectSocket=useCallback((room:string,arenaTicket:string,name:string)=>{if(!desiredOnline.current)return;const base=process.env.NEXT_PUBLIC_GAME_WS_URL?.trim()||`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}/api/ws`,url=new URL(base);url.searchParams.set('ticket',arenaTicket);const ws=new WebSocket(url);let socketPlayer='';wsRef.current=ws;ws.addEventListener('open',()=>{reconnectDelay.current=650});ws.addEventListener('message',ev=>{let msg:GatewayToClient;try{msg=JSON.parse(String(ev.data))as GatewayToClient}catch{return}if(msg.type==='ready'){socketPlayer=msg.playerId;setPlayerId(msg.playerId);ws.send(JSON.stringify({type:'join',name}));setPhase(p=>p==='dead'?'dead':'playing');return}if(msg.type==='snapshot'){canvasRef.current?.setSnapshot(msg);const n=performance.now();if(n-leaderAt.current>260){leaderAt.current=n;setSnapshot(msg)}return}if(msg.type==='world'){canvasRef.current?.setWorld(msg);return}if(msg.type==='pong'){setPing(Math.max(0,Math.round((Date.now()-msg.at)/2)));return}if(msg.type==='event'){if(msg.event==='death'&&msg.playerId===socketPlayer){setPhase('dead');setBoost(false);showToast('Тело рассыпалось в массу.')}else if(msg.event==='core'&&msg.playerId===socketPlayer)showToast(msg.mutation==='shield'?'CORE: щит поглотит удар':'CORE: OVERDRIVE активирован');else if(msg.event==='boss'&&msg.playerId===socketPlayer)showToast(`LEVIATHAN повержен · +${msg.reward}`)}});ws.addEventListener('close',()=>{if(!desiredOnline.current)return;const delay=reconnectDelay.current;reconnectDelay.current=Math.min(8000,delay*1.7);reconnectTimer.current=setTimeout(()=>{void(async()=>{try{const r=await fetch('/api/ticket',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({roomId:room})}),d=await r.json();if(!r.ok||!d.ticket)throw new Error();setTicket(d.ticket);connectSocket(room,d.ticket,name)}catch{setError('Связь с ареной потеряна');setPhase('menu');desiredOnline.current=false}})()},delay)});ws.addEventListener('error',()=>ws.close());if(pingTimer.current)clearInterval(pingTimer.current);pingTimer.current=setInterval(()=>{if(ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'ping',at:Date.now()}))},1800)},[showToast]);
-const play=useCallback(async()=>{setError('');setPhase('matching');setMetrics(DEFAULT);try{const r=await fetch('/api/matchmake',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({nickname})}),d=await r.json();if(!r.ok||!d.roomId||!d.ticket)throw new Error(d.error||'Матчмейкинг не ответил');setRoomId(d.roomId);setTicket(d.ticket);desiredOnline.current=true;connectSocket(d.roomId,d.ticket,d.nickname||nickname)}catch(e){setError(e instanceof Error?e.message:'Ошибка подключения');setPhase('menu')}},[connectSocket,nickname]);const respawn=useCallback(()=>{const ws=wsRef.current;if(ws?.readyState===WebSocket.OPEN){setMetrics(DEFAULT);ws.send(JSON.stringify({type:'join',name:nickname}));setPhase('playing');return}setPhase('menu')},[nickname]);const sendInput=useCallback((input:PlayerInput)=>{const ws=wsRef.current;if(phase==='playing'&&ws?.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'input',input}))},[phase]);const back=useCallback(()=>{disconnect();setSnapshot(null);setRoomId('');setTicket('');setPlayerId('');setBoost(false);setPhase('menu');void loadSession().catch(()=>{})},[disconnect,loadSession]);const leaders=useMemo(()=>snapshot?[...snapshot.worms].sort((a,b)=>b.mass-a.mass).slice(0,6):[],[snapshot]);
-return <main className="game-root"><div className="ambient a1"/><div className="ambient a2"/>{phase==='playing'||phase==='dead'?<GameCanvas ref={canvasRef} playerId={playerId} onInput={sendInput} onMetrics={setMetrics} boost={boost}/>:<MenuBackdrop/>}{phase==='playing'||phase==='dead'?<><header className="top-hud"><div className="brand-chip"><span>W</span><div><b>WORM ARENA</b><small>LIVE WORLD</small></div></div><div className="connection-chip"><i className={ping<90?'good':ping<170?'mid':'bad'}/>{ping||'…'} ms <em>•</em> {roomId.slice(0,6)}</div></header><section className="mass-panel"><small>МАССА</small><strong>{metrics.mass}</strong><div className="mass-track"><span style={{width:`${Math.min(100,Math.sqrt(metrics.mass/900)*100)}%`}}/></div><footer><b>{massClass(metrics.mass)}</b><span>{metrics.speed} u/s</span></footer></section><section className="combat-panel"><div><small>МЕСТО</small><b>#{metrics.rank}<em>/{metrics.players}</em></b></div><div><small>КИЛЛЫ</small><b>{metrics.kills}</b></div><div><small>КОМБО</small><b>x{Math.max(1,metrics.combo)}</b></div></section><aside className="leaderboard"><header><span>ТОП АРЕНЫ</span><b>{snapshot?.worms.length??0} live</b></header>{leaders.map((w:WormSnapshot,i)=><div key={w.id} className={w.id===playerId?'me':''}><i>{i+1}</i><span>{w.elite?'♛ ':''}{w.name}</span><b>{Math.round(w.mass)}</b></div>)}</aside><button className={`boost-button ${boost?'pressed':''}`} onPointerDown={(e:ReactPointerEvent<HTMLButtonElement>)=>{e.preventDefault();setBoost(true)}} onPointerUp={()=>setBoost(false)} onPointerCancel={()=>setBoost(false)}><span>BOOST</span><small>держи</small></button><div className="tip-chip">Резкий поворот не отменяет импульс. Массу надо перекладывать заранее.</div></>:null}{toast?<div className="toast">{toast}</div>:null}{phase==='boot'?<Center text="Запускаем мир" sub="OIDC · сеть · физика"/>:null}{phase==='menu'?<section className="menu-card"><div className="menu-kicker"><i/> PERSISTENT MULTIPLAYER</div><h1>WORM<br/><span>ARENA</span></h1><p>Не верёвка из кружков. Тяжёлое тело сохраняет импульс, хвост догоняет траекторию, а жирный червь требует планировать поворот заранее.</p><label className="name-field"><span>ИМЯ</span><input maxLength={18} value={nickname} onChange={(e:ChangeEvent<HTMLInputElement>)=>setNickname(e.target.value)}/></label><button className="play-button" onClick={play}><span>ВОЙТИ В АРЕНУ</span><b>→</b></button>{error?<div className="inline-error">{error}</div>:null}<div className="profile-strip"><div><small>РЕКОРД</small><b>{profile.best_mass}</b></div><div><small>КИЛЛЫ</small><b>{profile.kills}</b></div><div><small>МАТЧИ</small><b>{profile.matches}</b></div><div><small>МОНЕТЫ</small><b>{profile.coins}</b></div></div></section>:null}{phase==='matching'?<Center text="Ищем живую арену" sub="Подбираем комнату и authoritative host"/>:null}{phase==='dead'?<section className="death-card"><small>RUN COMPLETE</small><h2>{metrics.mass}<span> массы</span></h2><div className="death-stats"><div><span>киллы</span><b>{metrics.kills}</b></div><div><span>место</span><b>#{metrics.rank}</b></div><div><span>пинг</span><b>{ping}ms</b></div></div><button onClick={respawn}>ЕЩЁ РАЗ</button><button className="ghost" onClick={back}>В меню</button></section>:null}{phase==='error'?<section className="center-card"><b>Онлайн не запустился</b><p>{error}</p><button onClick={()=>location.reload()}>Повторить</button></section>:null}</main>}
-function Center({text,sub}:{text:string;sub:string}){return <div className="center-card"><div className="loader"/><b>{text}</b><span>{sub}</span></div>}function MenuBackdrop(){return <div className="menu-world"><div className="grid-floor"/><div className="demo-worm">{Array.from({length:13},(_,i)=><i key={i}/>)}</div></div>}function massClass(m:number){return m<70?'ЛЁГКИЙ':m<160?'ПЛОТНЫЙ':m<300?'ТЯЖЁЛЫЙ':m<520?'МАССИВНЫЙ':'ТИТАН'}
-const GameCanvas=forwardRef<CanvasHandle,{playerId:string;boost:boolean;onInput(v:PlayerInput):void;onMetrics(v:Metrics):void}>(function GameCanvas({playerId,boost,onInput,onMetrics},ref){const canvas=useRef<HTMLCanvasElement|null>(null),snap=useRef<SnapshotMessage|null>(null),world=useRef<WorldMessage|null>(null),camera=useRef({x:0,y:0,z:1}),pointer=useRef({x:1,y:0}),seq=useRef(0),lastSend=useRef(0),lastMetric=useRef(0),space=useRef(false);useImperativeHandle(ref,()=>({setSnapshot:v=>{snap.current=v},setWorld:v=>{world.current=v}}),[]);useEffect(()=>{const c=canvas.current;if(!c)return;const g=c.getContext('2d',{alpha:false});if(!g)return;let raf=0,last=performance.now();const point=(e:PointerEvent)=>{pointer.current={x:e.clientX-innerWidth/2,y:e.clientY-innerHeight/2}},kd=(e:KeyboardEvent)=>{if(e.code==='Space'){space.current=true;e.preventDefault()}},ku=(e:KeyboardEvent)=>{if(e.code==='Space')space.current=false};c.addEventListener('pointermove',point,{passive:true});c.addEventListener('pointerdown',point,{passive:true});addEventListener('keydown',kd);addEventListener('keyup',ku);const frame=(now:number)=>{const dt=Math.min(.05,(now-last)/1000);last=now;const d=Math.min(2,devicePixelRatio||1),w=innerWidth,h=innerHeight;if(c.width!==Math.round(w*d)||c.height!==Math.round(h*d)){c.width=Math.round(w*d);c.height=Math.round(h*d);c.style.width=w+'px';c.style.height=h+'px'}g.setTransform(d,0,0,d,0,0);g.fillStyle='#061015';g.fillRect(0,0,w,h);const s=snap.current,me=s?.worms.find(x=>x.id===playerId),cam=camera.current;if(me){const ext=Math.min(.1,Math.max(0,(Date.now()-s!.serverTime)/1000)),tx=me.x+me.vx*ext,ty=me.y+me.vy*ext,f=1-Math.exp(-6*dt);cam.x+=(tx-cam.x)*f;cam.y+=(ty-cam.y)*f;const z=Math.max(.48,Math.min(1.05,1.06-Math.log2(Math.max(34,me.mass)/34)*.115));cam.z+=(z-cam.z)*(1-Math.exp(-4*dt))}g.save();g.translate(w/2,h/2);g.scale(cam.z,cam.z);g.translate(-cam.x,-cam.y);drawGrid(g,cam,w,h,world.current?.worldRadius??3400);if(world.current)for(const f of world.current.foods){const r=f.core?14:3+Math.min(4,f.value*.6);g.fillStyle=f.core?'#aefaff':`hsl(${f.hue} 78% 64%)`;g.shadowBlur=f.core?28:0;g.shadowColor='#5ef2ff';g.beginPath();g.arc(f.x,f.y,r,0,Math.PI*2);g.fill()}g.shadowBlur=0;if(s)for(const worm of [...s.worms].sort((a,b)=>a.id===playerId?1:b.id===playerId?-1:a.mass-b.mass))drawWorm(g,worm,worm.id===playerId);g.restore();if(me){if(now-lastSend.current>32){lastSend.current=now;onInput({seq:++seq.current,angle:Math.atan2(pointer.current.y,pointer.current.x),boost:boost||space.current,clientTime:Date.now()})}if(now-lastMetric.current>150){lastMetric.current=now;const ls=[...(s?.worms??[])].sort((a,b)=>b.mass-a.mass);onMetrics({mass:Math.round(me.mass),kills:me.kills,combo:me.combo,rank:Math.max(1,ls.findIndex(x=>x.id===playerId)+1),players:ls.length,speed:Math.round(Math.hypot(me.vx,me.vy))})}}raf=requestAnimationFrame(frame)};raf=requestAnimationFrame(frame);return()=>{cancelAnimationFrame(raf);c.removeEventListener('pointermove',point);c.removeEventListener('pointerdown',point);removeEventListener('keydown',kd);removeEventListener('keyup',ku)}},[boost,onInput,onMetrics,playerId]);return <canvas ref={canvas} className="game-canvas"/>});
-function drawGrid(g:CanvasRenderingContext2D,c:{x:number;y:number;z:number},w:number,h:number,r:number){const step=140,hw=w/(2*c.z)+step,hh=h/(2*c.z)+step;g.strokeStyle='rgba(109,174,180,.055)';g.lineWidth=1/c.z;g.beginPath();for(let x=Math.floor((c.x-hw)/step)*step;x<c.x+hw;x+=step){g.moveTo(x,c.y-hh);g.lineTo(x,c.y+hh)}for(let y=Math.floor((c.y-hh)/step)*step;y<c.y+hh;y+=step){g.moveTo(c.x-hw,y);g.lineTo(c.x+hw,y)}g.stroke();g.strokeStyle='rgba(255,93,81,.28)';g.lineWidth=9;g.beginPath();g.arc(0,0,r,0,Math.PI*2);g.stroke()}
-function drawWorm(g:CanvasRenderingContext2D,w:WormSnapshot,me:boolean){const pts=[{x:w.x,y:w.y},...w.body],colors=SKINS[w.skin%SKINS.length];if(pts.length<2)return;g.save();g.lineCap='round';g.lineJoin='round';g.strokeStyle='rgba(0,0,0,.45)';g.lineWidth=w.radius*2.2;path(g,pts);g.stroke();const grad=g.createLinearGradient(w.x-w.radius*3,w.y-w.radius*3,w.x+w.radius*3,w.y+w.radius*3);grad.addColorStop(0,colors[0]);grad.addColorStop(1,colors[1]);g.strokeStyle=grad;g.lineWidth=w.radius*1.72;g.shadowBlur=me?16:w.elite?26:7;g.shadowColor=w.elite?'#ff5970':me?'#58e7ef':'#000';path(g,pts);g.stroke();g.shadowBlur=0;const fx=Math.cos(w.angle),fy=Math.sin(w.angle),sx=-fy,sy=fx;for(const side of[-1,1]){const ex=w.x+fx*w.radius*.45+sx*w.radius*.43*side,ey=w.y+fy*w.radius*.45+sy*w.radius*.43*side,er=Math.max(2.5,w.radius*.18);g.fillStyle='#fff';g.beginPath();g.arc(ex,ey,er,0,Math.PI*2);g.fill();g.fillStyle='#071016';g.beginPath();g.arc(ex+fx*er*.45,ey+fy*er*.45,er*.48,0,Math.PI*2);g.fill()}if(w.shield){g.strokeStyle='#6ceff2aa';g.lineWidth=3;g.beginPath();g.arc(w.x,w.y,w.radius*1.55,0,Math.PI*2);g.stroke()}if(w.elite){g.fillStyle='#ff8da0';g.font='700 16px system-ui';g.textAlign='center';g.fillText('LEVIATHAN',w.x,w.y-w.radius*1.8)}g.restore()}function path(g:CanvasRenderingContext2D,p:{x:number;y:number}[]){g.beginPath();g.moveTo(p[0].x,p[0].y);for(let i=1;i<p.length-1;i++){const a=p[i],b=p[i+1];g.quadraticCurveTo(a.x,a.y,(a.x+b.x)/2,(a.y+b.y)/2)}const z=p.at(-1)!;g.lineTo(z.x,z.y)}
+
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { GameCanvas, type GameCanvasHandle, type GameMetrics } from '@/components/game-canvas';
+import type { SnapshotMessage, WormSnapshot } from '@/lib/game/types';
+import type { GatewayToClient } from '@/lib/realtime/protocol';
+
+type Phase = 'boot' | 'menu' | 'matching' | 'playing' | 'reconnecting' | 'dead' | 'error';
+type Profile = { nickname: string; best_mass: number; kills: number; matches: number; coins: number };
+type GlobalLeader = { rank: number; nickname: string; bestMass: number; kills: number; matches: number; coins: number };
+
+const DEFAULT: GameMetrics = { mass: 34, kills: 0, combo: 0, rank: 1, players: 1, speed: 0 };
+const EMPTY_PROFILE: Profile = { nickname: 'Игрок', best_mass: 0, kills: 0, matches: 0, coins: 0 };
+
+export function GameShell() {
+  const [phase, setPhase] = useState<Phase>('boot');
+  const [nickname, setNickname] = useState('Игрок');
+  const [profile, setProfile] = useState<Profile>(EMPTY_PROFILE);
+  const [globalLeaders, setGlobalLeaders] = useState<GlobalLeader[]>([]);
+  const [roomId, setRoomId] = useState('');
+  const [playerId, setPlayerId] = useState('');
+  const [snapshot, setSnapshot] = useState<SnapshotMessage | null>(null);
+  const [metrics, setMetrics] = useState<GameMetrics>(DEFAULT);
+  const [ping, setPing] = useState(0);
+  const [boost, setBoost] = useState(false);
+  const [toast, setToast] = useState('');
+  const [error, setError] = useState('');
+
+  const wsRef = useRef<WebSocket | null>(null);
+  const canvasRef = useRef<GameCanvasHandle | null>(null);
+  const leaderAt = useRef(0);
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectDelay = useRef(650);
+  const desiredOnline = useRef(false);
+  const deadRef = useRef(false);
+  const pingTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = useCallback((message: string) => {
+    setToast(message);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(''), 2400);
+  }, []);
+
+  const loadLeaderboard = useCallback(async () => {
+    try {
+      const response = await fetch('/api/leaderboard', { cache: 'no-store' });
+      const data = await response.json();
+      if (response.ok && Array.isArray(data.leaders)) setGlobalLeaders(data.leaders.slice(0, 8));
+    } catch {
+      // Leaderboard is non-critical for entering the arena.
+    }
+  }, []);
+
+  const loadSession = useCallback(async () => {
+    const response = await fetch('/api/session', { cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Сессия недоступна');
+    if (data.profile) {
+      setProfile(data.profile);
+      setNickname(data.profile.nickname || 'Игрок');
+    }
+    return data;
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([loadSession(), loadLeaderboard()])
+      .then(() => { if (!cancelled) setPhase('menu'); })
+      .catch((cause) => {
+        if (!cancelled) {
+          setError(cause instanceof Error ? cause.message : 'Ошибка запуска');
+          setPhase('error');
+        }
+      });
+    return () => { cancelled = true; };
+  }, [loadLeaderboard, loadSession]);
+
+  const disconnect = useCallback(() => {
+    desiredOnline.current = false;
+    if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+    if (pingTimer.current) clearInterval(pingTimer.current);
+    const socket = wsRef.current;
+    wsRef.current = null;
+    socket?.close();
+  }, []);
+
+  useEffect(() => () => disconnect(), [disconnect]);
+
+  const connectSocket = useCallback((room: string, arenaTicket: string, name: string) => {
+    if (!desiredOnline.current) return;
+    const base = process.env.NEXT_PUBLIC_GAME_WS_URL?.trim() || `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/ws`;
+    const url = new URL(base);
+    url.searchParams.set('ticket', arenaTicket);
+    const ws = new WebSocket(url);
+    let socketPlayer = '';
+    wsRef.current = ws;
+
+    if (pingTimer.current) clearInterval(pingTimer.current);
+
+    ws.addEventListener('open', () => {
+      reconnectDelay.current = 650;
+    });
+
+    ws.addEventListener('message', (event) => {
+      let msg: GatewayToClient;
+      try { msg = JSON.parse(String(event.data)) as GatewayToClient; } catch { return; }
+
+      if (msg.type === 'ready') {
+        socketPlayer = msg.playerId;
+        setPlayerId(msg.playerId);
+        ws.send(JSON.stringify({ type: 'join', name }));
+        setPhase(deadRef.current ? 'dead' : 'playing');
+        return;
+      }
+      if (msg.type === 'snapshot') {
+        canvasRef.current?.setSnapshot(msg);
+        const now = performance.now();
+        if (now - leaderAt.current > 260) {
+          leaderAt.current = now;
+          setSnapshot(msg);
+        }
+        return;
+      }
+      if (msg.type === 'world') {
+        canvasRef.current?.setWorld(msg);
+        return;
+      }
+      if (msg.type === 'pong') {
+        setPing(Math.max(0, Math.round((Date.now() - msg.at) / 2)));
+        return;
+      }
+      if (msg.type === 'event') {
+        if (msg.event === 'death' && msg.playerId === socketPlayer) {
+          deadRef.current = true;
+          setPhase('dead');
+          setBoost(false);
+          showToast('Тело рассыпалось в массу.');
+          setTimeout(() => {
+            void loadSession().catch(() => {});
+            void loadLeaderboard();
+          }, 450);
+        } else if (msg.event === 'core' && msg.playerId === socketPlayer) {
+          showToast(msg.mutation === 'shield' ? 'CORE: щит поглотит удар' : 'CORE: OVERDRIVE активирован');
+        } else if (msg.event === 'boss' && msg.playerId === socketPlayer) {
+          showToast(`LEVIATHAN повержен · +${msg.reward}`);
+        }
+      }
+    });
+
+    ws.addEventListener('close', () => {
+      if (wsRef.current !== ws || !desiredOnline.current) return;
+      const delay = reconnectDelay.current;
+      reconnectDelay.current = Math.min(8000, Math.round(delay * 1.7));
+      if (!deadRef.current) setPhase('reconnecting');
+      reconnectTimer.current = setTimeout(() => {
+        void (async () => {
+          try {
+            const response = await fetch('/api/ticket', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ roomId: room }),
+            });
+            const data = await response.json();
+            if (!response.ok || !data.ticket) throw new Error('ticket_refresh_failed');
+            connectSocket(room, data.ticket, name);
+          } catch {
+            setError('Связь с ареной потеряна');
+            setPhase('menu');
+            desiredOnline.current = false;
+            deadRef.current = false;
+            void loadLeaderboard();
+          }
+        })();
+      }, delay);
+    });
+
+    ws.addEventListener('error', () => ws.close());
+    pingTimer.current = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping', at: Date.now() }));
+    }, 1800);
+  }, [loadLeaderboard, loadSession, showToast]);
+
+  const play = useCallback(async () => {
+    setError('');
+    setPhase('matching');
+    setMetrics(DEFAULT);
+    deadRef.current = false;
+    try {
+      const response = await fetch('/api/matchmake', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ nickname }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.roomId || !data.ticket) throw new Error(data.error || 'Матчмейкинг не ответил');
+      setRoomId(data.roomId);
+      desiredOnline.current = true;
+      connectSocket(data.roomId, data.ticket, data.nickname || nickname);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Ошибка подключения');
+      setPhase('menu');
+    }
+  }, [connectSocket, nickname]);
+
+  const respawn = useCallback(() => {
+    const ws = wsRef.current;
+    if (ws?.readyState === WebSocket.OPEN) {
+      deadRef.current = false;
+      setMetrics(DEFAULT);
+      ws.send(JSON.stringify({ type: 'join', name: nickname }));
+      setPhase('playing');
+      return;
+    }
+    deadRef.current = false;
+    setPhase('reconnecting');
+  }, [nickname]);
+
+  const sendInput = useCallback((input: Parameters<NonNullable<React.ComponentProps<typeof GameCanvas>['onInput']>>[0]) => {
+    const ws = wsRef.current;
+    if (phase === 'playing' && ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', input }));
+  }, [phase]);
+
+  const back = useCallback(() => {
+    disconnect();
+    deadRef.current = false;
+    setSnapshot(null);
+    setRoomId('');
+    setPlayerId('');
+    setBoost(false);
+    setPhase('menu');
+    setTimeout(() => {
+      void loadSession().catch(() => {});
+      void loadLeaderboard();
+    }, 300);
+  }, [disconnect, loadLeaderboard, loadSession]);
+
+  const leaders = useMemo(() => snapshot ? [...snapshot.worms].sort((a, b) => b.mass - a.mass).slice(0, 6) : [], [snapshot]);
+  const inArena = phase === 'playing' || phase === 'dead' || phase === 'reconnecting';
+
+  return <main className="game-root">
+    <div className="ambient a1"/><div className="ambient a2"/>
+    {inArena ? <GameCanvas ref={canvasRef} playerId={playerId} onInput={sendInput} onMetrics={setMetrics} boost={boost}/> : <MenuBackdrop/>}
+
+    {inArena ? <>
+      <header className="top-hud">
+        <div className="brand-chip"><span>W</span><div><b>WORM ARENA</b><small>LIVE WORLD</small></div></div>
+        <div className="connection-chip"><i className={phase === 'reconnecting' ? 'mid' : ping < 90 ? 'good' : ping < 170 ? 'mid' : 'bad'}/>{phase === 'reconnecting' ? 'reconnect' : `${ping || '…'} ms`} <em>•</em> {roomId.slice(0, 6)}</div>
+      </header>
+      <section className="mass-panel"><small>МАССА</small><strong>{metrics.mass}</strong><div className="mass-track"><span style={{width:`${Math.min(100,Math.sqrt(metrics.mass/900)*100)}%`}}/></div><footer><b>{massClass(metrics.mass)}</b><span>{metrics.speed} u/s</span></footer></section>
+      <section className="combat-panel"><div><small>МЕСТО</small><b>#{metrics.rank}<em>/{metrics.players}</em></b></div><div><small>КИЛЛЫ</small><b>{metrics.kills}</b></div><div><small>КОМБО</small><b>x{Math.max(1,metrics.combo)}</b></div></section>
+      <aside className="leaderboard"><header><span>ТОП АРЕНЫ</span><b>{snapshot?.worms.length ?? 0} live</b></header>{leaders.map((worm: WormSnapshot, index) => <div key={worm.id} className={worm.id === playerId ? 'me' : ''}><i>{index + 1}</i><span>{worm.elite ? '♛ ' : ''}{worm.name}</span><b>{Math.round(worm.mass)}</b></div>)}</aside>
+      <button className={`boost-button ${boost ? 'pressed' : ''}`} onPointerDown={(event: ReactPointerEvent<HTMLButtonElement>) => { event.preventDefault(); setBoost(true); }} onPointerUp={() => setBoost(false)} onPointerCancel={() => setBoost(false)} disabled={phase !== 'playing'}><span>BOOST</span><small>держи</small></button>
+      <div className="tip-chip">Резкий поворот не отменяет импульс. Массу надо перекладывать заранее.</div>
+    </> : null}
+
+    {toast ? <div className="toast">{toast}</div> : null}
+    {phase === 'boot' ? <Center text="Запускаем мир" sub="OIDC · сеть · физика"/> : null}
+    {phase === 'matching' ? <Center text="Ищем живую арену" sub="Подбираем комнату и authoritative host"/> : null}
+    {phase === 'reconnecting' ? <Center text="Возвращаемся в арену" sub={`Повторное соединение · ${Math.round(reconnectDelay.current / 100) / 10}с`}/> : null}
+
+    {phase === 'menu' ? <>
+      <section className="menu-card">
+        <div className="menu-kicker"><i/> PERSISTENT MULTIPLAYER</div>
+        <h1>WORM<br/><span>ARENA</span></h1>
+        <p>Не верёвка из кружков. Тяжёлое тело сохраняет импульс, хвост догоняет траекторию, а жирный червь требует планировать поворот заранее.</p>
+        <label className="name-field"><span>ИМЯ</span><input maxLength={18} value={nickname} onChange={(event: ChangeEvent<HTMLInputElement>) => setNickname(event.target.value)}/></label>
+        <button className="play-button" onClick={play}><span>ВОЙТИ В АРЕНУ</span><b>→</b></button>
+        {error ? <div className="inline-error">{error}</div> : null}
+        <div className="profile-strip"><div><small>РЕКОРД</small><b>{profile.best_mass}</b></div><div><small>КИЛЛЫ</small><b>{profile.kills}</b></div><div><small>МАТЧИ</small><b>{profile.matches}</b></div><div><small>МОНЕТЫ</small><b>{profile.coins}</b></div></div>
+      </section>
+      <aside className="global-board">
+        <header><span>ГЛОБАЛЬНЫЙ ТОП</span><small>verified runs</small></header>
+        {globalLeaders.length ? globalLeaders.map((leader) => <div key={`${leader.rank}:${leader.nickname}`}><i>{leader.rank}</i><span>{leader.nickname}</span><b>{leader.bestMass}</b></div>) : <p>Рейтинг пуст. Первый подтверждённый забег заберёт вершину.</p>}
+      </aside>
+    </> : null}
+
+    {phase === 'dead' ? <section className="death-card"><small>RUN COMPLETE</small><h2>{metrics.mass}<span> массы</span></h2><div className="death-stats"><div><span>киллы</span><b>{metrics.kills}</b></div><div><span>место</span><b>#{metrics.rank}</b></div><div><span>пинг</span><b>{ping}ms</b></div></div><button onClick={respawn}>ЕЩЁ РАЗ</button><button className="ghost" onClick={back}>В меню</button></section> : null}
+    {phase === 'error' ? <section className="center-card"><b>Онлайн не запустился</b><p>{error}</p><button onClick={() => location.reload()}>Повторить</button></section> : null}
+  </main>;
+}
+
+function Center({ text, sub }: { text: string; sub: string }) {
+  return <div className="center-card"><div className="loader"/><b>{text}</b><span>{sub}</span></div>;
+}
+
+function MenuBackdrop() {
+  return <div className="menu-world"><div className="grid-floor"/><div className="demo-worm">{Array.from({length:13},(_,index)=><i key={index}/>)}</div></div>;
+}
+
+function massClass(mass: number) {
+  return mass < 70 ? 'ЛЁГКИЙ' : mass < 160 ? 'ПЛОТНЫЙ' : mass < 300 ? 'ТЯЖЁЛЫЙ' : mass < 520 ? 'МАССИВНЫЙ' : 'ТИТАН';
+}
