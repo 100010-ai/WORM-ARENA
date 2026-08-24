@@ -4,7 +4,7 @@ import { ArenaEngine } from '@/lib/game/server-engine';
 import { GAME } from '@/lib/game/config';
 import type { ServerEvent } from '@/lib/game/types';
 import type { BusMessage, ClientToGateway } from '@/lib/realtime/protocol';
-import { arenaControl, sanitizeName, signBus, SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL, verifyBus } from '@/lib/server/control';
+import { arenaControl, getSupabaseServerConfig, sanitizeName, signBus, verifyBus } from '@/lib/server/control';
 
 export const runtime='nodejs';
 export const maxDuration=300;
@@ -23,7 +23,8 @@ export async function GET(request:Request){
 }
 
 async function runGateway(ws:VSocket,pass:TicketPass){
-  const supabase=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
+  const{url,publishableKey}=getSupabaseServerConfig();
+  const supabase=createClient(url,publishableKey,{auth:{persistSession:false,autoRefreshToken:false}});
   const topic=`arena-bus:${pass.busTopic}`;
   const hostToken=crypto.randomUUID();
   let busSecret=pass.busSecret;
@@ -62,7 +63,7 @@ async function runGateway(ws:VSocket,pass:TicketPass){
     .on('broadcast',{event:'snapshot'},({payload}:{payload:unknown})=>{const m=verifyBus(payload,busSecret);if(!m)return;lastSnapshotAt=Date.now();send(m);})
     .on('broadcast',{event:'world'},({payload}:{payload:unknown})=>{const m=verifyBus(payload,busSecret);if(m)send(m);})
     .on('broadcast',{event:'game_event'},({payload}:{payload:unknown})=>{const m=verifyBus(payload,busSecret);if(m)send(m);})
-    .subscribe(async (status: string)=>{if(status!=='SUBSCRIBED')return;await tryClaim();send({type:'ready',playerId:pass.playerId,roomId:pass.roomId,host:isHost});});
+    .subscribe(async (status:string)=>{if(status!=='SUBSCRIBED')return;await tryClaim();send({type:'ready',playerId:pass.playerId,roomId:pass.roomId,host:isHost});});
 
   ws.on('message',(raw:unknown)=>{
     let msg:ClientToGateway;try{msg=JSON.parse(String(raw)) as ClientToGateway;}catch{return;}

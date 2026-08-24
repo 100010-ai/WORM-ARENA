@@ -1,1 +1,14 @@
-{"functions":{"app/api/ws/route.ts":{"maxDuration":300,"memory":1024},"app/api/matchmake/route.ts":{"maxDuration":20},"app/api/session/route.ts":{"maxDuration":20}}}
+{
+  "$schema":"https://openapi.vercel.sh/vercel.json",
+  "env":{
+    "SUPABASE_URL":"https://bodqpmgsncxvextwqxin.supabase.co",
+    "SUPABASE_PUBLISHABLE_KEY":"sb_publishable_7am-GmPUhFtYAPPb689zhQ_KWcD89H-"
+  },
+  "functions":{
+    "app/api/ws/route.ts":{"maxDuration":300,"memory":1024},
+    "app/api/matchmake/route.ts":{"maxDuration":20},
+    "app/api/session/route.ts":{"maxDuration":20},
+    "app/api/ticket/route.ts":{"maxDuration":20},
+    "app/api/leaderboard/route.ts":{"maxDuration":20}
+  }
+}
